@@ -30,39 +30,43 @@ use parent 'DBIx::Class::ResultSet';
 
 	my @funcs = @{ $opts->{pivot}};
 
-	my $cross_cols = [ map { my $f = $_; map { $self->ref_to_cross($f, $_) } @values } @funcs ];
-	my $as = [ map { $self->ref_to_as($_) } @$cross_cols ];
+	my @cross_select = map { my $f = $_; map { $self->ref_to_cross($f, $_) } @values } @funcs;
+	my @cross_as     = map { $self->ref_to_as($_) } @cross_select;
 	
 	my (@as, @select);
-	if (0) {
+	if (1) {
 	    my $re = quotemeta($opts->{on}->[0]);
-	    @as = grep { $_ ne $opts->{on}->[0] } @{$self->_resolved_attrs->{as}};
-	    @select = grep { !/$re/ }             @{$self->_resolved_attrs->{select}};
-	    $cross_cols = [@select, @$cross_cols ];
-	    $as = [ @as, @$as ];
-	    @select = (); @as = ();
+
+	    @select = map { ref $_ ? $self->ref_to_literal($_) : $_ } grep { !/$re/ } @{$self->_resolved_attrs->{select}};
+	    @as     = map { ref $_ ? $self->ref_to_as($_) : $_ } @select;
+	    
+	    # $cross_cols = [ @select, @cross_select ];
+	    # $as         = [ @as, @cross_as ];
+	    # @select = (); @as = ();
+	    # dump \@as;
+	    # dump \@select;
 	} else {
 	    @as = @{$opts->{group_by}};
 	    @select = @{$opts->{group_by}}
 	}
-	dump \@as;
-	dump \@select;
 
 	my $cross = $self
 	    ->search({}, {
-			  'select' => [ @select, @{$cross_cols} ],
-			  'as'     => [ @as,     @{$as} ],
+			  'select' => [ @select, @cross_select ],
+			  'as'     => [ @as, @cross_as ],
 			  group_by => $opts->{group_by}
 			 });
 	my ($sql, @bind) = @{${$cross->as_query}};
-	# dump $sql;
+	$sql =~ s/^\s*\((.*)\)\s*$/$1/;
 
-	dump $cross_cols;
-	dump $as;
+
+	# dump $cross_cols;
+	# dump $as;
 	
-	dump $sql;
-	my $alias = \[ $sql, @bind ];
-    
+	dump $sql . ';';
+	dump $self->current_source_alias;
+	my $alias = \[ '(' . $sql . ')' , @bind ];
+	# my $alias = \[ $sql , @bind ];
     
 	return $self->result_source->resultset->search(undef, {
 							       alias => $self->current_source_alias,
@@ -72,12 +76,14 @@ use parent 'DBIx::Class::ResultSet';
 									 -source_handle              => $self->result_source->handle,
 									}],
 							       result_class => $self->result_class,
-							       'as'     => [ @as, @{$as} ],
-							       'select' => [ @as, @{$as} ],
+							       'as'     => [ @as, @cross_as ],
+							       'select' => [ @as, @cross_as ],
 							      })
     }
 
     use String::SQLColumnName qw/fix_name/;
+
+
 
     sub ref_to_cross {
 	my $self = shift;
@@ -106,6 +112,27 @@ use parent 'DBIx::Class::ResultSet';
 	    };
 	};
     }
+
+    sub ref_to_literal {
+	my $self = shift;
+	my $function = shift;
+	dump $function;
+	for (ref $function) {
+	    /HASH/ && do {
+		my ($func, $field) = (%{$function});
+		my $as = fix_name(join '_', $func, $field);
+		my $res = sprintf "%s (%s) as %s", $func, $field, $as;
+		return \$res;
+	    };
+	    /SCALAR/ && do {
+		my %defs = %{SQL::Statement->new("select " . $$function, $p)->column_defs->[0]};
+		my $as = fix_name($defs{fullorg});
+		my ($field, $func, $distinct) = @defs{qw/argstr name distinct/};
+		my $res = sprintf "%s ( %s %s ) as %s", $func, $distinct, $field, $as;
+		return \$res;
+	    };
+	};
+    };
 
     sub ref_to_as {
 	my $self = shift;

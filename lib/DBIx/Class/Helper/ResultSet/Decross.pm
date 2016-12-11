@@ -32,7 +32,7 @@ package DBIx::Class::Helper::ResultSet::Decross;
 	my (@sql, @params);
 
 	for (@cols) {
-	    my $s = $self->search({}, { '+select' => [ \"\'$_\' as field", \"$_ as value"  ] });
+	    my $s = $self->search({}, { '+select' => [ \"\'$_\' as field_name", \"$_ as field_value"  ] });
 	    my ($sql, @bind) = @{${$s->as_query}};
 	    $sql =~ s/^\s*\((.*)\)\s*$/$1/;
 	    
@@ -49,7 +49,7 @@ package DBIx::Class::Helper::ResultSet::Decross;
 									-alias                      => $self->current_source_alias,
 									-source_handle              => $self->result_source->handle,
 								    }],
-						       'columns' => [@as, qw/field value/],
+						       'columns' => [@as, qw/field_name field_value/],
 						       result_class => $self->result_class,
 						   });
     }
