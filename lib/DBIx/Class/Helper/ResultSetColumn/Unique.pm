@@ -5,6 +5,7 @@ sub DBIx::Class::ResultSetColumn::unique {
     return map { $_->[0] } $self->_resultset->search({},
 			      {
 			       columns => [ $self->{_select} ],
+			       group_by => [ $self->{_select} ],
 			       distinct => 1
 			      } )->cursor->all;
 }

@@ -14,26 +14,67 @@ use parent 'DBIx::Class::ResultSet';
     my $p = SQL::Parser->new;
 
     sub crosstab {
-	my $self = shift;
-	my $on = shift;
-	my @opts = @_;
+	my $self  = shift;
+	my $query = shift;
+	my $opts  = shift;
 
-	my @columns = @{$self->{attrs}->{columns}};
+	dump $self->_resolved_attrs->{as};
+	my @values;
+	if (scalar @{$opts->{on}} == 1) {
+	    @values = $opts->{in} ?
+		map { { $opts->{on}->[0] => $_} } @{$opts->{in}}
+		: map { { $opts->{on}->[0] => $_ } } $self->get_column($opts->{on}->[0])->unique
+	} else {
+	    die('multiple pivot values not supported yet');
+	}
 
-	my @funcs = @opts;
-	my @values  = map { { $on => $_ } } $self->get_column($on)->unique;
-	# dump \@columns;
-	
+	my @funcs = @{ $opts->{pivot}};
+
 	my $cross_cols = [ map { my $f = $_; map { $self->ref_to_cross($f, $_) } @values } @funcs ];
 	my $as = [ map { $self->ref_to_as($_) } @$cross_cols ];
-	my $cross = $self->search({}, {
-				       '+select' => $cross_cols,
-				       '+as' => $as,
-				       group_by => \@columns
-				      } );
+	
+	my (@as, @select);
+	if (0) {
+	    my $re = quotemeta($opts->{on}->[0]);
+	    @as = grep { $_ ne $opts->{on}->[0] } @{$self->_resolved_attrs->{as}};
+	    @select = grep { !/$re/ }             @{$self->_resolved_attrs->{select}};
+	    $cross_cols = [@select, @$cross_cols ];
+	    $as = [ @as, @$as ];
+	    @select = (); @as = ();
+	} else {
+	    @as = @{$opts->{group_by}};
+	    @select = @{$opts->{group_by}}
+	}
+	dump \@as;
+	dump \@select;
 
-	# $cross->result_class('DBIx::Class::ResultClass::HashRefInflator');
-	return $cross;
+	my $cross = $self
+	    ->search({}, {
+			  'select' => [ @select, @{$cross_cols} ],
+			  'as'     => [ @as,     @{$as} ],
+			  group_by => $opts->{group_by}
+			 });
+	my ($sql, @bind) = @{${$cross->as_query}};
+	# dump $sql;
+
+	dump $cross_cols;
+	dump $as;
+	
+	dump $sql;
+	my $alias = \[ $sql, @bind ];
+    
+    
+	return $self->result_source->resultset->search(undef, {
+							       alias => $self->current_source_alias,
+							       from => [{
+									 $self->current_source_alias => $alias,
+									 -alias                      => $self->current_source_alias,
+									 -source_handle              => $self->result_source->handle,
+									}],
+							       result_class => $self->result_class,
+							       'as'     => [ @as, @{$as} ],
+							       'select' => [ @as, @{$as} ],
+							      })
     }
 
     use String::SQLColumnName qw/fix_name/;
@@ -47,35 +88,25 @@ use parent 'DBIx::Class::ResultSet';
 	    /HASH/ && do {
 		my ($func, $field) = (%{$function});
 		my ($cross, $val)  = (%{$value});
-		my $res = sprintf "%s (CASE WHEN %s = %s then %s ELSE NULL END) as %s_%s_%s",
-		    $func,
-		    $cross,
-		    $self->result_source->storage->dbh->quote($val),
-		    $field,
-		    $func,
-		    $field,
-		    fix_name($val);
+		my $as = fix_name(join '_', $func, $field, $val);
+		$val = $self->result_source->storage->dbh->quote($val);
+
+		my $res = sprintf "%s (CASE WHEN %s = %s then %s ELSE NULL END) as %s", $func, $cross, $val, $field, $as;
 		return \$res;
 	    };
 	    /SCALAR/ && do {
 		my ($cross, $val)  = (%{$value});
-		my $s = SQL::Statement->new("select " . $$function, $p);
-		my %defs = %{$s->column_defs->[0]};
+		my %defs = %{SQL::Statement->new("select " . $$function, $p)->column_defs->[0]};
+		my $as = fix_name($defs{fullorg} . '_' . $val);
+		my ($field, $func, $distinct) = @defs{qw/argstr name distinct/};
+		$val = $self->result_source->storage->dbh->quote($val);
 
-		$defs{caseargstr} = sprintf "(CASE WHEN %s = %s then %s ELSE NULL END)", $cross, $self->result_source->storage->dbh->quote($val), $defs{argstr};
-
-		$defs{as} = $defs{fullorg} . '_' . fix_name($val);
-		for ($defs{as}) {
-		    s/^\s|\s$//g;
-		    s/\W+/_/g;
-		    s/^_|_$//g;
-		    s/__/_/g
-		}
-		my $res = sprintf "%s ( %s %s ) as %s", @defs{qw/name distinct caseargstr as/};
+		my $res = sprintf "%s ( %s (CASE WHEN %s = %s then %s ELSE NULL END) ) as %s", $func, $distinct, $cross, $val, $field, $as;
 		return \$res;
 	    };
 	};
     }
+
     sub ref_to_as {
 	my $self = shift;
 	my $function = shift;
