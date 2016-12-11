@@ -18,7 +18,7 @@ use parent 'DBIx::Class::ResultSet';
 	my $query = shift;
 	my $opts  = shift;
 
-	dump $self->_resolved_attrs->{as};
+	# dump $self->_resolved_attrs->{as};
 	my @values;
 	if (scalar @{$opts->{on}} == 1) {
 	    @values = $opts->{in} ?
@@ -33,22 +33,10 @@ use parent 'DBIx::Class::ResultSet';
 	my @cross_select = map { my $f = $_; map { $self->ref_to_cross($f, $_) } @values } @funcs;
 	my @cross_as     = map { $self->ref_to_as($_) } @cross_select;
 	
+	my $re = quotemeta($opts->{on}->[0]);
 	my (@as, @select);
-	if (1) {
-	    my $re = quotemeta($opts->{on}->[0]);
-
-	    @select = map { ref $_ ? $self->ref_to_literal($_) : $_ } grep { !/$re/ } @{$self->_resolved_attrs->{select}};
-	    @as     = map { ref $_ ? $self->ref_to_as($_) : $_ } @select;
-	    
-	    # $cross_cols = [ @select, @cross_select ];
-	    # $as         = [ @as, @cross_as ];
-	    # @select = (); @as = ();
-	    # dump \@as;
-	    # dump \@select;
-	} else {
-	    @as = @{$opts->{group_by}};
-	    @select = @{$opts->{group_by}}
-	}
+	@select = map { ref $_ ? $self->ref_to_literal($_) : $_ } grep { !/$re/ } @{$self->_resolved_attrs->{select}};
+	@as     = map { ref $_ ? $self->ref_to_as($_) : $_ } @select;
 
 	my $cross = $self
 	    ->search({}, {
@@ -57,17 +45,9 @@ use parent 'DBIx::Class::ResultSet';
 			  group_by => $opts->{group_by}
 			 });
 	my ($sql, @bind) = @{${$cross->as_query}};
-	$sql =~ s/^\s*\((.*)\)\s*$/$1/;
+	$sql =~ s/^\s*\((.*)\)\s*$/($1)/;
 
-
-	# dump $cross_cols;
-	# dump $as;
-	
-	dump $sql . ';';
-	dump $self->current_source_alias;
-	my $alias = \[ '(' . $sql . ')' , @bind ];
-	# my $alias = \[ $sql , @bind ];
-    
+	my $alias = \[ $sql , @bind ];
 	return $self->result_source->resultset->search(undef, {
 							       alias => $self->current_source_alias,
 							       from => [{
@@ -82,8 +62,6 @@ use parent 'DBIx::Class::ResultSet';
     }
 
     use String::SQLColumnName qw/fix_name/;
-
-
 
     sub ref_to_cross {
 	my $self = shift;
@@ -116,7 +94,7 @@ use parent 'DBIx::Class::ResultSet';
     sub ref_to_literal {
 	my $self = shift;
 	my $function = shift;
-	dump $function;
+	# dump $function;
 	for (ref $function) {
 	    /HASH/ && do {
 		my ($func, $field) = (%{$function});
