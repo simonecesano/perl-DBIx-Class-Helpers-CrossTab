@@ -7,8 +7,6 @@ use parent 'DBIx::Class::ResultSet';
 {
     package DBIx::Class::ResultSet;
 
-    # use SQL::Statement;
-    # my $p = SQL::Parser->new;
     use Data::Dump qw/dump/;
 
 
