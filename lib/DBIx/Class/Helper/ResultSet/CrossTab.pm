@@ -3,21 +3,24 @@ package DBIx::Class::Helper::ResultSet::CrossTab;
 use strict;
 use warnings;
 
-
 use parent 'DBIx::Class::ResultSet';
 {
     package DBIx::Class::ResultSet;
 
-    use SQL::Statement;
+    # use SQL::Statement;
+    # my $p = SQL::Parser->new;
     use Data::Dump qw/dump/;
 
-    my $p = SQL::Parser->new;
 
+    my $quote = sub { return "'" . $_[0] . "'" };
+    
     sub crosstab {
 	my $self  = shift;
 	my $query = shift;
 	my $opts  = shift;
 
+	$quote = sub { return $self->result_source->storage->dbh->quote( $_[0]) };
+	
 	# dump $self->_resolved_attrs->{as};
 	my @values;
 	if (scalar @{$opts->{on}} == 1) {
@@ -73,28 +76,45 @@ use parent 'DBIx::Class::ResultSet';
 		my ($func, $field) = (%{$function});
 		my ($cross, $val)  = (%{$value});
 		my $as = fix_name(join '_', $func, $field, $val);
-		$val = $self->result_source->storage->dbh->quote($val);
-
+		$val = $quote->($val);
 		my $res = sprintf "%s (CASE WHEN %s = %s then %s ELSE NULL END) as %s", $func, $cross, $val, $field, $as;
 		return \$res;
 	    };
 	    /SCALAR/ && do {
 		my ($cross, $val)  = (%{$value});
-		my %defs = %{SQL::Statement->new("select " . $$function, $p)->column_defs->[0]};
-		my $as = fix_name($defs{fullorg} . '_' . $val);
-		my ($field, $func, $distinct) = @defs{qw/argstr name distinct/};
-		$val = $self->result_source->storage->dbh->quote($val);
-
-		my $res = sprintf "%s ( %s (CASE WHEN %s = %s then %s ELSE NULL END) ) as %s", $func, $distinct, $cross, $val, $field, $as;
+		$val = $quote->($val);
+		my ($func, $distinct, $arg, $as) = parse_statement($$function);
+		my $res = sprintf "%s ( %s (CASE WHEN %s = %s then %s ELSE NULL END) ) as %s", $func, $distinct, $cross, $val, $arg, $as;
 		return \$res;
 	    };
 	};
     }
 
+    sub parse_statement {
+	local $_ = shift;
+	
+	my ($distinct, $as);
+	if (s/\((distinct)\s/\(/i) { $distinct = $1 }
+	if (s/\((all)\s/\(/i)      { $distinct = $1 }
+	
+	$distinct ||= 'all';
+	
+	if (s/\sas\s+(.+)//i) { $as = $1 }
+	my ($func, $arg) = ($_ =~ /\s*(\w+)\s*\(\s*(.+?)\s*\)\s*$/i);
+	
+	my $arg_as = $arg;
+	for ($arg_as) { s/\w+?\.//g; s/\W+/_/g;  };
+	
+	$as ||= join '_', $func, $distinct, $arg_as;
+	for ($as) { s/__+/_/g; s/_+$//; }
+	
+	return $func, $distinct, $arg, $as;
+    }
+
+    
     sub ref_to_literal {
 	my $self = shift;
 	my $function = shift;
-	# dump $function;
 	for (ref $function) {
 	    /HASH/ && do {
 		my ($func, $field) = (%{$function});
@@ -103,10 +123,8 @@ use parent 'DBIx::Class::ResultSet';
 		return \$res;
 	    };
 	    /SCALAR/ && do {
-		my %defs = %{SQL::Statement->new("select " . $$function, $p)->column_defs->[0]};
-		my $as = fix_name($defs{fullorg});
-		my ($field, $func, $distinct) = @defs{qw/argstr name distinct/};
-		my $res = sprintf "%s ( %s %s ) as %s", $func, $distinct, $field, $as;
+		my ($func, $distinct, $arg, $as) = parse_statement($$function);
+		my $res = sprintf "%s ( %s %s ) as %s", $func, $distinct, $arg, $as;
 		return \$res;
 	    };
 	};
