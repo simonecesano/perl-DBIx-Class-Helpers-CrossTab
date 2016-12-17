@@ -1,5 +1,7 @@
 package DBIx::Class::Helper::ResultSet::CrossTab;
 
+# ABSTRACT: helper to simulate crosstab
+
 use strict;
 use warnings;
 
@@ -9,7 +11,6 @@ use parent 'DBIx::Class::ResultSet';
 
     use Data::Dump qw/dump/;
 
-
     my $quote = sub { return "'" . $_[0] . "'" };
     
     sub crosstab {
@@ -18,15 +19,22 @@ use parent 'DBIx::Class::ResultSet';
 	my $opts  = shift;
 
 	$quote = sub { return $self->result_source->storage->dbh->quote( $_[0]) };
-	
-	# dump $self->_resolved_attrs->{as};
 	my @values;
-	if (scalar @{$opts->{on}} == 1) {
-	    @values = $opts->{in} ?
-		map { { $opts->{on}->[0] => $_} } @{$opts->{in}}
-		: map { { $opts->{on}->[0] => $_ } } $self->get_column($opts->{on}->[0])->unique
+
+	if ($opts->{in} && scalar @{$opts->{in}}) {
+	    @values = map {
+		my %h;
+		@h{@{$opts->{on}}} = ref $_ ? @{$_} : ($_);
+		\%h;
+	    } @{$opts->{in}};
 	} else {
-	    die('multiple pivot values not supported yet');
+	    my $v = $self->search({}, { columns => $opts->{on}, group_by => $opts->{on}, order_by => $opts->{on} });
+	    $v->result_class('DBIx::Class::ResultClass::HashRefInflator');
+	    @values = map {
+		my %h;
+		@h{@{$opts->{on}}} = @{$_}{@{$opts->{on}}};
+		\%h;
+	    } $v->all;
 	}
 
 	my @funcs = @{ $opts->{pivot}};
@@ -68,21 +76,20 @@ use parent 'DBIx::Class::ResultSet';
 	my $self = shift;
 	my $function = shift;
 	my $value    = shift;
+
+	my $when = join ' AND ', map { $_ . '=' . $quote->($value->{$_}) } keys %$value;
 	
 	for (ref $function) {
+	    my $res;
 	    /HASH/ && do {
-		my ($func, $field) = (%{$function});
-		my ($cross, $val)  = (%{$value});
-		my $as = fix_name(join '_', $func, $field, $val);
-		$val = $quote->($val);
-		my $res = sprintf "%s (CASE WHEN %s = %s then %s ELSE NULL END) as %s", $func, $cross, $val, $field, $as;
+		my ($func, $arg) = (%{$function});
+		my $as = fix_name(join '_', $func, $arg, $when);
+		my $res = sprintf "%s (CASE WHEN %s then %s ELSE NULL END) as %s",        $func, $when, $arg, $as;
 		return \$res;
 	    };
 	    /SCALAR/ && do {
-		my ($cross, $val)  = (%{$value});
-		$val = $quote->($val);
 		my ($func, $distinct, $arg, $as) = parse_statement($$function);
-		my $res = sprintf "%s ( %s (CASE WHEN %s = %s then %s ELSE NULL END) ) as %s", $func, $distinct, $cross, $val, $arg, $as;
+		my $res = sprintf "%s ( %s (CASE WHEN %s then %s ELSE NULL END) ) as %s", $func, $distinct, $when, $arg, $as;
 		return \$res;
 	    };
 	};
@@ -92,14 +99,21 @@ use parent 'DBIx::Class::ResultSet';
 	local $_ = shift;
 	
 	my ($distinct, $as);
+
+	# get 'distinct' or 'all' in function
 	if (s/\((distinct)\s/\(/i) { $distinct = $1 }
 	if (s/\((all)\s/\(/i)      { $distinct = $1 }
-	
 	$distinct ||= 'all';
 	
+	# get 'as' part
 	if (s/\sas\s+(.+)//i) { $as = $1 }
+
+	# get function (word followed by round bracket)
+	# and arguments (the part between the first and last brackets)
 	my ($func, $arg) = ($_ =~ /\s*(\w+)\s*\(\s*(.+?)\s*\)\s*$/i);
-	
+
+	# eliminate the me.something from as to make a good
+	# string for the as part
 	my $arg_as = $arg;
 	for ($arg_as) { s/\w+?\.//g; s/\W+/_/g;  };
 	
