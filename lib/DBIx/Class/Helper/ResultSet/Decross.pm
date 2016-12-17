@@ -1,5 +1,7 @@
 package DBIx::Class::Helper::ResultSet::Decross;
 
+# ABSTRACT: flatten multiple fields into field_name, field_value structure
+
 {
     package DBIx::Class::ResultSet;
 
