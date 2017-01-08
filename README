@@ -1,3 +1,9 @@
+!!DEPRECATED!! DO NOT USE !!
+
+Still contains interesting snippets though.
+
+----------------------------------------------------------------
+
 DBIx::Class::Helper::ResultSet::CrossTab
 
 Generates crosstabs (a.k.a.: pivot tables) from a dataset
